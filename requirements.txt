@@ -1,0 +1,10 @@
+numpy
+plyfile
+pillow
+torch
+torchvision
+tqdm
+opencv-python
+tensorboard
+lpips
+scipy
