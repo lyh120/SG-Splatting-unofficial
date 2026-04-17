@@ -1,178 +1,148 @@
-# SG-Splatting (论文复现版)
+# SG-Splatting（论文思路复现版）
 
-本仓库在 3D Gaussian Splatting 基础上实现 SG-Splatting 的核心思想，并提供从环境配置到测评结果导出的完整流程。
+本项目基于 3D Gaussian Splatting，实现了 SG-Splatting 的核心思路，并提供从环境部署、训练、渲染到评测的完整流程。
 
-## 1. 与论文复现要求对齐检查
+## 1. 当前实现状态（与你本次排查结论一致）
 
-已完成（核心一致）：
-- SG 外观建模（Diffuse + 多个 SG lobes，视角相关颜色）。
-- 正交多轴 SG（`--sg_axis_mode orthogonal`，每个高斯学习一个 SG 基旋转）。
-- 分阶段训练（默认 `--sg_start_iter 2000`，可 warmup）。
-- 自适应低阶 SH 融合（按投影尺寸动态选 0/1/2 阶）。
-- 3DGS 稠密化/裁剪/不透明度重置训练策略。
-- 训练、渲染、checkpoint、PLY 参数保存与恢复。
-- 标准评测脚本（PSNR/SSIM/LPIPS），自动输出 JSON 结果。
+- 已对齐到 **官方 3 通道 rasterizer 接口**（不再依赖 11 通道兼容补丁）。
+- 已支持论文关键训练策略：
+  - `orthogonal` 多轴 SG
+  - `sg_start_iter` 分阶段启用 SG
+  - 自适应低阶 SH（0/1/2）
+- 提供一键流程脚本：`repro_paper.py`（train → render → evaluate）。
 
-仍属于工程近似（不是逐行官方代码）：
-- SG 着色在 Python 中计算后传入 rasterizer（未改 CUDA 内核）。
-- 自适应 SH 的投影尺寸使用高斯尺度近似估计（工程可复现，可能与论文实现细节有常数差异）。
+## 2. `submodules` 是否冗余？
 
-## 1.1 项目原理（简述）
+不是冗余，必须保留：
 
-- 几何：沿用 3DGS 的高斯位置/尺度/旋转/不透明度优化，以及 densify/prune。
-- 外观：每个高斯包含 `diffuse + SG lobes`，SG 用于建模视角相关高光与方向性辐射。
-- 论文关键优化：
-  - 正交多轴 SG（`orthogonal`）：每个高斯学习一个局部正交基，再派生 SG 方向，降低自由度并提升稳定性。
-  - 分阶段引入 SG：前期先学几何与基础颜色，后期再逐步打开 SG（默认 2000 iter 后 warmup）。
-  - 自适应低阶 SH：按投影尺寸选择 0/1/2 阶，平衡细节与稳定性。
+- `submodules/diff-gaussian-rasterization`：核心可微光栅化 CUDA 扩展
+- `submodules/simple-knn`：初始化和几何处理依赖的 CUDA 扩展
 
-## 2. 项目结构
+这些模块需要本地源码编译，不能只靠纯 pip 依赖替代。  
+可以删的是编译残留/缓存（例如旧 Python 版本 `.so`、`__pycache__`），本仓库已清理明显冗余残留。
 
-- `train.py`：训练入口。
-- `render.py`：渲染 train/test 视角。
-- `evaluate.py`：评测 PSNR/SSIM/LPIPS，保存 `eval/metrics_iter_xxx.json`。
-- `scene/gaussian_model.py`：高斯参数、SG/SH 参数、densify/prune、PLY IO。
-- `gaussian_renderer/__init__.py`：SG + 自适应低阶 SH 颜色计算与 rasterizer 对接。
+## 3. 环境配置（Linux）
 
-已删除与当前复现流程无关的旧模块（扩散/深度/额外可视化/Replica loader 等），避免依赖污染与复现歧义。
+建议环境：
+- Python 3.10
+- CUDA Toolkit 11.8
+- PyTorch cu118
 
-## 3. 环境配置（从零开始）
-
-### 3.1 建议环境
-- OS: Linux / Windows
-- Python: 3.9 或 3.10
-- CUDA: 与本机 PyTorch 对应版本一致
-- GPU: NVIDIA（建议 >= 12GB 显存用于较大场景）
-
-### 3.2 安装依赖
 ```bash
+conda create -n sg_splatting python=3.10 -y
+conda activate sg_splatting
+
+pip install -U pip setuptools wheel ninja
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
 pip install -r requirements.txt
 ```
 
-### 3.3 编译 CUDA 扩展
+## 4. 切换并安装官方 rasterizer（推荐）
+
 ```bash
-pip install -e submodules/diff-gaussian-rasterization
-pip install -e submodules/simple-knn
+cd ~/ll_further/SG-Splatting
+bash scripts/switch_official_rasterizer.sh
 ```
 
-若此步未成功，`train.py` / `render.py` / `evaluate.py` 会因 `diff_gaussian_rasterization` 缺失而无法运行。
+该脚本会：
+1. 将 `diff-gaussian-rasterization` 对齐到官方仓库
+2. 拉取子模块（含 `third_party/glm`）
+3. 重新编译安装 `diff_gaussian_rasterization` 与 `simple_knn`
+4. 自动导入验证
 
-## 4. 数据准备
+## 5. 数据格式要求
 
-支持两类数据布局：
+只支持以下两种场景根目录：
 
-1. COLMAP 数据：
-- `scene_root/sparse/0/...`
-- `scene_root/images/...`
+1. COLMAP
+- `<scene_root>/sparse/0/...`
+- `<scene_root>/images/...`
 
-2. Blender/NeRF-synthetic：
-- `scene_root/transforms_train.json`
-- `scene_root/transforms_test.json`
-- 图像文件
+2. Blender / NeRF-Synthetic
+- `<scene_root>/transforms_train.json`
+- `<scene_root>/transforms_test.json`
 
-## 5. 训练（论文配置）
+## 6. 快速开始（你当前最建议流程）
 
-推荐直接使用 `--paper_mode`，它会自动锁定论文复现关键参数：
-- `eval=True`
-- `num_sg=3`
-- `sg_axis_mode=orthogonal`
-- `sg_start_iter=2000`
-- `sg_warmup_iters=500`
-- `use_adaptive_low_sh=True`
-- `adaptive_sh_max_degree=2`
-- `sh_small_radius_threshold=1.5`
-- `sh_medium_radius_threshold=6.0`
-
-### 5.1 COLMAP 场景（推荐）
 ```bash
-python train.py -s /path/to/scene -m ./output/scene_sg \
-  --paper_mode
+cd ~/ll_further/SG-Splatting
+DATA=~/ll_further/SG-Splatting/Chocolate
+OUT=~/ll_further/SG-Splatting/output/chocolate_run
 ```
 
-### 5.2 Blender 场景
+### 6.1 快速收敛验证（5k）
+
+对于 Blender/RGBA 数据，推荐带 `--white_background`：
+
 ```bash
-python train.py -s /path/to/lego -m ./output/lego_sg --white_background \
-  --paper_mode
+rm -rf "$OUT"
+python train.py -s "$DATA" -m "$OUT" \
+  --paper_mode --white_background --seed 0 \
+  --iterations 5000 \
+  --test_iterations 500 1000 2000 3000 4000 5000 \
+  --save_iterations 500 1000 2000 3000 4000 5000
 ```
 
-训练日志会输出测试集 `L1 / PSNR / SSIM`，并在 `--save_iterations` 对应迭代保存点云参数。
-
-如需严格可复现，可附加：
-```bash
---seed 0 --deterministic
-```
-
-## 6. 渲染结果
+### 6.2 渲染输出图片
 
 ```bash
-python render.py -s /path/to/scene -m ./output/scene_sg --iteration -1 --paper_mode
+python render.py -s "$DATA" -m "$OUT" \
+  --iteration 5000 --paper_mode --white_background --seed 0
 ```
 
 输出目录：
-- `output/scene_sg/test/ours_<iter>/renders`
-- `output/scene_sg/test/ours_<iter>/gt`
+- `output/.../train/ours_5000/renders`
+- `output/.../train/ours_5000/gt`
+- `output/.../test/ours_5000/renders`
+- `output/.../test/ours_5000/gt`
 
-## 7. 测评结果（论文常用指标）
-
-### 7.1 评测 test split
-```bash
-python evaluate.py -s /path/to/scene -m ./output/scene_sg --iteration -1 --split test --paper_mode
-```
-
-### 7.2 同时评测 train + test
-```bash
-python evaluate.py -s /path/to/scene -m ./output/scene_sg --iteration -1 --split both --paper_mode
-```
-
-### 7.3 不计算 LPIPS（加速）
-```bash
-python evaluate.py -s /path/to/scene -m ./output/scene_sg --iteration -1 --split test --skip_lpips --paper_mode
-```
-
-评测完成后会写入：
-- `output/scene_sg/eval/metrics_iter_<iter>.json`
-
-JSON 包含：
-- 每个 split 的平均 `L1 / PSNR / SSIM / LPIPS`
-- 每张图的逐帧指标（`per_view`）
-
-## 8. 论文级复现实验建议
-
-为降低偶然性，建议：
-- 使用固定数据划分。
-- 每个场景至少跑 3 次（不同 seed），报告均值与标准差。
-- 汇总多个场景的平均 PSNR/SSIM/LPIPS，并和论文表格同口径对齐。
-
-结果表模板（示例）：
-
-| Scene | PSNR ↑ | SSIM ↑ | LPIPS ↓ |
-|---|---:|---:|---:|
-| scene_a | xx.xx | 0.xxxx | 0.xxxx |
-| scene_b | xx.xx | 0.xxxx | 0.xxxx |
-| mean | xx.xx | 0.xxxx | 0.xxxx |
-
-## 8.1 一键论文复现（推荐）
+### 6.3 评测（PSNR/SSIM/LPIPS）
 
 ```bash
-python repro_paper.py -s /path/to/scene -m ./output/scene_sg
+python evaluate.py -s "$DATA" -m "$OUT" \
+  --iteration 5000 --split test --paper_mode --white_background --seed 0
 ```
 
-这条命令会自动串行执行：
-1. `train.py --paper_mode`
-2. `render.py --paper_mode`
-3. `evaluate.py --paper_mode`
+指标文件：
+- `output/.../eval/metrics_iter_5000.json`
 
-可选参数：
-- `--seed 0 --deterministic`：更强可复现
-- `--skip_render` / `--skip_eval`：跳过阶段
+## 7. 一键全流程（30k）
 
-## 9. 常见问题
+```bash
+python repro_paper.py \
+  -s ~/ll_further/SG-Splatting/Chocolate \
+  -m ~/ll_further/SG-Splatting/output/chocolate_sg \
+  --seed 0 --white_background
+```
 
-- `ModuleNotFoundError: diff_gaussian_rasterization`  
-  说明 CUDA 扩展未编译成功，重新执行第 3.3 节命令。
+## 8. 常见问题
 
-- LPIPS 导入失败  
-  执行 `pip install lpips`，或评测时加 `--skip_lpips`。
+### 8.1 `ModuleNotFoundError: diff_gaussian_rasterization`
+- 扩展未编译或当前环境未安装，重跑：
+  - `bash scripts/switch_official_rasterizer.sh`
 
-- 显存不足  
-  可降低输入分辨率、减少迭代轮次、关闭部分测试频率后再逐步恢复。
+### 8.2 `ModuleNotFoundError: simple_knn`
+- 重新安装：
+```bash
+python -m pip uninstall -y simple_knn
+python -m pip install -e ./submodules/simple-knn --no-build-isolation
+```
+
+### 8.3 `glm/glm.hpp: No such file or directory`
+- 官方子模块未拉取完整，执行：
+```bash
+cd submodules/diff-gaussian-rasterization
+git submodule update --init --recursive
+```
+
+### 8.4 不加 `--white_background` 指标异常或几乎不变
+- 对 Blender/RGBA 场景，通常应使用 `--white_background` 保持监督口径一致。
+
+## 9. 论文口径说明
+
+本仓库当前目标是“论文思路 + 官方 3 通道接口”的工程复现。  
+若需要更严格的数值复现，请固定：
+- 相同数据划分
+- 相同随机种子
+- 相同训练迭代与评测口径
+- 多次运行后统计 mean/std

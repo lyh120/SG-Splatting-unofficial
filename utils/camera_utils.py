@@ -56,7 +56,12 @@ def cameraList_from_camInfos(cam_infos, resolution_scale, args):
     return [loadCam(args, idx, cam_info, resolution_scale) for idx, cam_info in enumerate(cam_infos)]
 
 
-def camera_to_JSON(idx, camera: Camera):
+def camera_to_JSON(idx, camera):
+    fovy = getattr(camera, "FoVy", getattr(camera, "FovY"))
+    fovx = getattr(camera, "FoVx", getattr(camera, "FovX"))
+    width = getattr(camera, "width")
+    height = getattr(camera, "height")
+
     Rt = np.zeros((4, 4))
     Rt[:3, :3] = camera.R.transpose()
     Rt[:3, 3] = camera.T
@@ -69,10 +74,10 @@ def camera_to_JSON(idx, camera: Camera):
     return {
         "id": idx,
         "img_name": camera.image_name,
-        "width": camera.width,
-        "height": camera.height,
+        "width": width,
+        "height": height,
         "position": pos.tolist(),
         "rotation": serializable_rot,
-        "fy": fov2focal(camera.FoVy, camera.height),
-        "fx": fov2focal(camera.FoVx, camera.width),
+        "fy": fov2focal(fovy, height),
+        "fx": fov2focal(fovx, width),
     }
