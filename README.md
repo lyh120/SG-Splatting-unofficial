@@ -1,5 +1,22 @@
 # SG-Splatting
 
+## Visual Comparison
+
+| Train GT | Train Render |
+| --- | --- |
+| ![Train GT](docs/readme_assets/comparison/train_gt.png) | ![Train Render](docs/readme_assets/comparison/train_render.png) |
+
+| Test GT | Test Render |
+| --- | --- |
+| ![Test GT](docs/readme_assets/comparison/test_gt.png) | ![Test Render](docs/readme_assets/comparison/test_render.png) |
+
+将下面 4 张图片放到 `docs/readme_assets/comparison/` 后，上面的四宫格会自动显示：
+
+- `train_gt.png`
+- `train_render.png`
+- `test_gt.png`
+- `test_render.png`
+
 SG-Splatting 的工程化复现仓库，基于 3D Gaussian Splatting，并补充了论文思路中的球面高斯（Spherical Gaussian, SG）颜色建模、自适应低阶 SH、训练/渲染/评测脚本，以及颜色诊断工具。
 
 本仓库当前目标是：
