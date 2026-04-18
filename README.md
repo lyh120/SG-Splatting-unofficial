@@ -10,6 +10,8 @@
 | --- | --- |
 | ![Test GT](docs/readme_assets/comparison/test_gt.png) | ![Test Render](docs/readme_assets/comparison/test_render.png) |
 
+Test set result: `PSNR=18.954` `SSIM=0.7444` `LPIPS=0.3497`
+
 将下面 4 张图片放到 `docs/readme_assets/comparison/` 后，上面的四宫格会自动显示：
 
 - `train_gt.png`
