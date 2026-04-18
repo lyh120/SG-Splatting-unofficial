@@ -13,7 +13,9 @@ def run_cmd(cmd):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="One-click SG-Splatting paper-style reproduction runner")
+    parser = argparse.ArgumentParser(
+        description="One-click SG-Splatting paper-mode runner (staged SG, projected-cov adaptive SH, fixed orthogonal axes)"
+    )
     parser.add_argument("-s", "--source_path", required=True, type=str)
     parser.add_argument("-m", "--model_path", required=True, type=str)
     parser.add_argument("--white_background", action="store_true")
@@ -22,9 +24,11 @@ if __name__ == "__main__":
     parser.add_argument("--deterministic", action="store_true")
     parser.add_argument("--skip_render", action="store_true")
     parser.add_argument("--skip_eval", action="store_true")
+    parser.add_argument("--skip_diagnose", action="store_true")
     parser.add_argument("--extra_train_args", type=str, default="")
     parser.add_argument("--extra_render_args", type=str, default="")
     parser.add_argument("--extra_eval_args", type=str, default="")
+    parser.add_argument("--extra_diagnose_args", type=str, default="")
     args = parser.parse_args()
 
     python = shlex.quote(sys.executable)
@@ -47,6 +51,13 @@ if __name__ == "__main__":
         )
         run_cmd(render_cmd)
 
+    if not args.skip_diagnose:
+        diagnose_cmd = (
+            f"{python} diagnose_color.py -s {source_path} -m {model_path} --iteration -1 "
+            f"{wb_flag} {args.extra_diagnose_args}"
+        )
+        run_cmd(diagnose_cmd)
+
     if not args.skip_eval:
         eval_cmd = (
             f"{python} evaluate.py -s {source_path} -m {model_path} --iteration -1 --split test "
@@ -54,4 +65,4 @@ if __name__ == "__main__":
         )
         run_cmd(eval_cmd)
 
-    print("\nPaper-style reproduction workflow finished.")
+    print("\nPaper-mode reproduction workflow finished.")

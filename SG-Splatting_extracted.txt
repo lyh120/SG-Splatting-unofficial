@@ -1,0 +1,859 @@
+
+
+===== PAGE 1 =====
+SG-Splatting: Accelerating 3D Gaussian Splatting with Spherical Gaussians
+Yiwen Wang1, Siyuan Chen 1, Ran Yi1
+1Shanghai Jiao Tong University
+wangyiwewn999@sjtu.edu.cn, gouliguojiashengsiyi@sjtu.edu.cn, ranyi@sjtu.edu.cn
+Abstract
+3D Gaussian Splatting is emerging as a state-of-the-art tech-
+nique in novel view synthesis, recognized for its impressive
+balance between visual quality, speed, and rendering effi-
+ciency. However, reliance on third-degree spherical harmon-
+ics for color representation introduces significant storage de-
+mands and computational overhead, resulting in a large mem-
+ory footprint and slower rendering speed. We introduce SG-
+Splatting with Spherical Gaussians based color representa-
+tion, a novel approach to enhance rendering speed and qual-
+ity in novel view synthesis. Our method first represents view-
+dependent color using Spherical Gaussians, instead of three
+degree spherical harmonics, which largely reduces the num-
+ber of parameters used for color representation, and signif-
+icantly accelerates the rendering process. We then develop
+an efficient strategy for organizing multiple Spherical Gaus-
+sians, optimizing their arrangement to achieve a balanced
+and accurate scene representation. To further improve ren-
+dering quality, we propose a mixed representation that com-
+bines Spherical Gaussians with low-degree spherical harmon-
+ics, capturing both high- and low-frequency color informa-
+tion effectively. SG-Splatting also has plug-and-play capabil-
+ity, allowing it to be easily integrated into existing systems.
+This approach improves computational efficiency and over-
+all visual fidelity, making it a practical solution for real-time
+applications.
+Introduction
+Novel view synthesis is an important task in computer
+graphics and vision, focusing on generating new perspec-
+tives of a scene from a limited set of multi-view images.
+This task addresses the challenge of creating realistic and
+immersive novel view images without requiring extensive
+data collection or manual modeling. The advent of 3D Gaus-
+sian Splatting (Kerbl et al. 2023) has injected new momen-
+tum into the field of novel view synthesis. Before the intro-
+duction of 3D Gaussian Splatting, NeRF (Mildenhall et al.
+2020) models, which rely on MLP for novel view synthesis,
+were widely used but suffered from slow inference times and
+lengthy training processes. In contrast, 3D Gaussian Splat-
+ting leverages Gaussian splats to represent scene geometry
+and appearance, offering significant improvements in ren-
+dering speed, image quality, and training efficiency. This
+approach effectively addresses the limitations of NeRF, pro-
+viding a more practical and scalable solution for applica-
+Figure 1: SG-Splatting: Spherical Gaussian-Based Splat-
+ting. The top row presents comparisons of SG-Splatting and
+3D-GS on rendering results and quantitative metrics on the
+DeepBlending (Hedman et al. 2018) dataset, demonstrating
+the ability to achieve rapid rendering. The bottom row pro-
+vides zoom-in qualitative analysis of the rendered scenes,
+highlighting how 3D-GS exhibits noticeable artifacts, which
+are effectively minimized by our SG-Splatting approach.
+tions requiring fast and high-quality view generation, such
+as virtual reality (Jiang et al. 2024), 3D&4D content genera-
+tion (Shao et al. 2024; Yang et al. 2024), physical simulation
+(Xie et al. 2023; Zhong et al. 2024) and autonomous driving
+(Zhou et al. 2024).
+Despite its advancements, 3D Gaussian Splatting faces
+significant challenges that limit its broader application, par-
+ticularly in real-time rendering environments. One of the pri-
+mary limitations is its reliance on third-degree spherical har-
+monics (SH) for color representation. While this approach
+allows for detailed and accurate color expression, it comes
+at the cost of a substantial memory footprint: each Gaus-
+sian requires 48 SH coefficients, considering a scene with
+millions of Gaussians, the total number of SH coefficients
+is huge. The high storage requirements not only consume
+a large amount of computational resources, but also restrict
+the scalability of the technique in more complex or larger
+scenes. Additionally, the use of spherical harmonics intro-
+duces computational complexity that impacts the rendering
+arXiv:2501.00342v1  [cs.CV]  31 Dec 2024
+
+===== PAGE 2 =====
+speed. The forward inference process requires considerable
+calculations, leading to slower rendering times, which can
+be a critical bottleneck in applications demanding real-time
+performance.
+To address the challenges posed by the large memory
+footprint and slow rendering speed of 3D Gaussian Splat-
+ting, several recent studies, including LightGaussian (Fan
+et al. 2023) and Compact3D (Navaneet et al. 2023), have
+focused on compressing the model size of 3D Gaussian
+Splatting to make it more efficient. These approaches pri-
+marily leverage traditional model compression techniques,
+such as knowledge distillation (Hinton, Vinyals, and Dean
+2015) and vector quantization (Jacob et al. 2018), to reduce
+the size of the model while attempting to maintain its visual
+quality. While these methods have shown promise in reduc-
+ing the computational demands of 3D Gaussian Splatting,
+they overlooked the potential optimizations within the 3D
+Gaussian Splatting representation itself, which could lead to
+significant space compression and rendering acceleration.
+Upon further investigation, we identified that the most sig-
+nificant parameter overhead in 3D Gaussian Splatting stems
+from the coefficients of the spherical harmonics used for
+color representation. Specifically, the use of third-degree
+spherical harmonics results in more than half of the model’s
+parameters being allocated to storing these coefficients 1,
+contributing to the substantial memory requirements and
+computational burden. To address this issue, we propose
+SG-Splatting with novel Spherical Gaussians based color
+representation, which offers a more compact and effi-
+cient representation. Firstly, we propose to represent view-
+dependent color using Spherical Gaussians, instead of three-
+degree SH, largely reducing the number of parameters re-
+quired for color representation. Secondly, we propose the
+use of multiple Spherical Gaussians of orthogonal orienta-
+tions, to better simulate and optimize the scene, achieving a
+balance between reduced parameter overhead and enhanced
+rendering performance. Furthermore, we propose a mixed
+color representation that combines Spherical Gaussians with
+adaptive low-degree spherical harmonics, which combines
+the advantages of SG in high-frequency color representa-
+tion, and the advantages of low-degree SH in low-frequency
+color representation, to further improve rendering quality.
+This approach accelerates the rendering process, making it
+more suitable for real-time applications.
+Contributions of this paper can be summarized as:
+• Spherical Gaussians based Color Representation: We
+propose SG-Splatting, an innovative approach that rep-
+resents view-dependent color using Spherical Gaussians,
+instead of three-degree spherical harmonics, significantly
+reducing the model’s parameter overhead and improving
+computational efficiency.
+• Effective Organization of Multiple Spherical Gaussians:
+To further enhance the model’s performance, we develop
+a method for the effective organization of multiple spher-
+ical Gaussians, optimizing scene representation while
+maintaining high visual fidelity.
+1In 3D-GS, each Gaussian has 59 parameters for geometry and
+texture representation, where 48 parameters are SH coefficients.
+• Mixed Spherical Gaussians and low-degree spheri-
+cal harmonics representation: We further propose a
+mixed color representation that combines the advantages
+of Spherical Gaussians in representing high-frequency
+color and the advantages of low-degree spherical har-
+monics in representing low-frequency color, to enhance
+rendering quality.
+• Plug-and-Play Capability: Our experiments show that
+SG-Splatting can be seamlessly integrated into other ac-
+celeration methods. This plug-and-play capability allows
+our approach to enhance existing techniques, improving
+rendering speed while maintaining output quality.
+Related Works
+Novel View Synthesis
+Novel view synthesis (NVS) traditionally relies on
+Structure-from-Motion (SfM) (Sch ¨onberger and Frahm
+2016) and Multi-View Stereo (MVS) (Sch ¨onberger et al.
+2016), where SfM reconstructs a scene’s 3D structure from
+multiple images, providing the initial geometry for further
+processing.
+Neural Radiance Fields (NeRF) (Mildenhall et al. 2020)
+brought a significant advancement to NVS by using a multi-
+layer perceptron (MLP) for volumetric scene modeling,
+though it suffers from slow training and rendering. Sub-
+sequent methods like Mip-NeRF 360 (Barron et al. 2022)
+improved image quality but at the cost of higher computa-
+tional demands, while InstantNGP (M ¨uller et al. 2022) and
+PlenOctree (Yu et al. 2021) focused on speeding up training
+and rendering, respectively.
+Recently, 3D Gaussian Splatting (3D-GS) has emerged
+as a more efficient alternative for NVS, surpassing NeRF
+in both speed and quality. By approximating radiance fields
+with Gaussian components, 3D-GS enables real-time ren-
+dering, making it a transformative development for novel
+view synthesis.
+3D-GS Fast Inference
+As an explicit rendering method, the inference speed of 3D
+Gaussian Splatting is closely related to the number of Gaus-
+sians used. The inference process cost ϵ of 3D Gaussian
+Splatting can be approximately quantified as:
+ϵ = N × C, (1)
+where N represents the total number of Gaussians in the
+system, and C denotes the computational cost associated
+with processing each individual Gaussian. This relationship
+highlights the direct impact of the number of Gaussians on
+the overall computational expense, emphasizing the impor-
+tance of efficient representation and processing within the
+3D Gaussian Splatting framework.
+To accelerate inference process, GES (Hamdi et al. 2024)
+reduces the number of Gaussians by optimizing Gaussian
+expressions using generalized exponential functions. Light-
+Gaussian (Fan et al. 2023) trims Gaussians based on their
+importance, determined by factors like opacity and volume.
+Compact3D (Navaneet et al. 2023) employs a learnable
+mask to prune Gaussians effectively. Mini-splatting (Fang
+
+===== PAGE 3 =====
+and Wang 2024) decreases sampling points by incorporat-
+ing depth estimation, While Eagles (Girish, Gupta, and Shri-
+vastava 2023) and Compress3D (Niedermayr, Stumpfegger,
+and Westermann 2023) use quantized methods to compress
+attributes like color and direction of Gaussian primitives.
+Although these methods have achieved notable success in
+speeding up the rendering process, they have not directly
+modified the most impactful component in Gaussian repre-
+sentation, the spherical harmonics (SH).
+Color Representation
+In novel view synthesis and computer graphics, color rep-
+resentation is crucial. Methods like NeRF use end-to-end
+MLPs to learn color information, but this approach demands
+significant computational resources, leading to long render-
+ing times. To mitigate these challenges, SNeRG (Hedman
+et al. 2021) separated appearance into diffuse and specu-
+lar components, reducing reliance on large MLPs and cut-
+ting down on inference time. Building on this, PlenOctree
+(Yu et al. 2021) introduced spherical harmonics (SH) for
+color representation, effectively approximating spherical fit-
+ting and improving efficiency for scenes viewed from vari-
+ous angles.
+Other techniques, such as spherical functions (Wang et al.
+2009; Xu et al. 2013) and wavelet transforms (Ng, Ra-
+mamoorthi, and Hanrahan 2003), have also been explored
+for color representation and storage. These methods effi-
+ciently capture and compress color information while pre-
+serving detail, enabling faster rendering and reduced storage
+requirements.
+In comparison, Spherical Gaussians (SG) are the most
+flexible and computationally lightweight option. With fewer
+parameters and simpler computations, SGs are ideal for ac-
+celerating rendering while maintaining high quality, making
+them well-suited for novel view synthesis.
+Methods
+Overview
+The original 3D Gaussian Splatting system, due to its re-
+liance on three degree spherical harmonics, requires a large
+number of parameters to store the spherical harmonic coef-
+ficients. This results in a significant increase in the model’s
+memory usage and also adversely affects the forward render-
+ing speed. We propose SG-Splatting, a novel 3D Gaussian
+Splatting technique designed to overcome the limitations of
+traditional spherical harmonics by using Spherical Gaus-
+sians (SG) based color representation .
+As shown in Fig. 2, our SG-Splatting framework builds
+upon 3D-GS by incorporating Sperical Gaussians to form a
+more compact color representation. The inputs and output
+of our system are the same as original 3D-GS: The inputs
+consists of multi-view scene images and their corresponding
+camera parameters, and the output is the final rendered im-
+age of the scene. The process begins by using the multi-view
+images to generate an initial point cloud by SfM. This point
+cloud is then used to initialize elliptical Gaussians, which
+represent the scene’s geometry and color, where the color
+adopts our SG-based representation. These elliptical Gaus-
+sians are optimized by minimizing the loss between the ren-
+dered image and the ground truth, using alpha blending to
+produce the final scene renderings.
+Different from original 3D-GS that uses three degree
+spherical harmonics (SH) for color representation, to en-
+hance rendering quality while maintaining efficiency, we
+further propose a mixed color representation that com-
+bines Spherical Gaussians and adaptive low-degree
+spherical harmonics. 1) The high-frequency color compo-
+nent is represented using Spherical Gaussians, which is more
+compact than SH, and excels at representing high-frequency
+color components, to capture fine lighting and shading de-
+tails. Using single SG requires only 7 parameters to repre-
+sent view-dependent color, much fewer than 45 parameters
+required by three-degree SH. Furthermore, we propose to
+use multiple SGs of orthogonal orientations to complement
+each other and improve the modeling of color and light. This
+orthogonal arrangement ensures that each Gaussian can ef-
+fectively represent distinct aspects of the scene’s color and
+light, minimizing redundancy and improving the overall ren-
+dering quality. 2) Meanwhile, the low-frequency color com-
+ponent is initially expressed using a simple 3-dimensional
+diffuse color (the zero degree SH component), with the op-
+tion to replace this with adaptive low-degree SH (0-2 degree)
+for a better balance between rendering speed and quality.
+Although using low-degree SH alongside Spherical Gaus-
+sians may slightly reduce rendering speed, it significantly
+improves the overall rendering quality, making this trade-off
+beneficial for scenarios where visual fidelity is a priority.
+Preliminaries
+3D Gaussian Splatting (3D-GS) is an explicit method for
+modeling scenes in novel view synthesis using a set of 3D
+Gaussian ellipsoilds with geometric and texture properties.
+The geometry of each Gaussian is parameterized by its
+center position X and a covariance matrix Σ. The covari-
+ance matrix defines the shape, size, and orientation of the
+Gaussian, allowing it to model the spatial distribution of the
+data.Therefore, given a pointx in the 3D space, the Gaussian
+function is defined as:
+G(x) = e− 1
+2 (x−X)T Σ−1(x−X), (2)
+where the covariance matrix is typically decomposed into
+a rotation matrix R (represented by a quaternion q) and a
+scaling matrix S (represented by a scaling vector s). This
+decomposition ensures that the Gaussian primitives are ap-
+propriately oriented and scaled in the 3D space:
+Σ = RSS T RT . (3)
+The texture information of each Gaussian consists of
+opacity σ and spherical harmonics (to represent color). For
+rendering, the 3D Gaussian primitives are first projected into
+2D space from a given viewpoint (Zwicker et al. 2002).
+Once projected, the overlapping splats are accumulated and
+blended to create the final image.
+Spherical Harmonics (SH). To achieve high-quality ren-
+dering, particularly in capturing complex lighting and shad-
+
+===== PAGE 4 =====
+Loss
+Backward processForward process
+Multi Spherical Gaussians(w/orientationconstraints)xσcolorqs
+AdaptiveLow-Degree Spherical Harmonics
+Initialization3D Gaussian PrimitiveSfMPoints
+Splatting
+Render2D Splat
+Gaussian AttributesRender
+Render
+ColorRepresentation
+Figure 2: Our SG-Splatting framework for novel view synthesis. The process begins with multi-view images and corresponding
+camera views, which are used to initialize Gaussian primitives through SfM. These primitives are characterized by their posi-
+tions, covariance matrices, opacity and color information. High-frequency color components are represented using Spherical
+Gaussians (SGs) to accurately capture view-dependent effects, while low-frequency color components are supplemented using
+diffuse or adaptive low-degree Spherical Harmonics (SH) to provide a smooth and consistent representation. The final rendered
+output is compared with the ground truth to evaluate the method performance.
+ing effects, 3D-GS utilizes three degree spherical harmon-
+ics (SH) to represent the scene’s color. Spherical harmon-
+ics have components that carry specific physical meanings,
+stemming from their mathematical origins in solving the an-
+gular part of Laplace’s equation in spherical coordinates.
+These components are particularly useful in representing an-
+gular functions and capturing the directional properties of
+light and sound in various physical systems. Specifically,
+3D-GS uses the following formula to represent color by SH:
+c(v) =
+LX
+l=0
+lX
+m=−l
+clmYlm(v), (4)
+where v is the input viewing direction, c(v) is the color ob-
+served from that direction, clm is the spherical harmonic co-
+efficient, and Ylm(v) is the spherical harmonic basis func-
+tion of degree l and order m. The sum is taken over all de-
+grees l and orders m up to a specified levelL = 3, capturing
+the complexity of the color variations.
+Each SH has a fixed and distinct shape. For a given spher-
+ical function, these SHs need to be combined and their coef-
+ficients adjusted to accurately fit the function. This process
+involves fine-tuning each coefficient to capture the specific
+features and details of the spherical function being repre-
+sented. However, for three degree SH, the entire 3D-GS sys-
+tem requires 16 SH coefficients for each color channel, and
+48 SH coefficients in total. This results in a significant in-
+crease in the model’s parameter count, contributing to the
+substantial memory overhead and computational complex-
+ity associated with the system.
+Spherical Gaussian based Color Representation
+To address the inefficiencies associated with spherical har-
+monics, i.e., requiring 48 SH coefficients for color represen-
+tation, we propose to use Spherical Gaussians for color rep-
+resentation. Spherical Gaussians are more lightweight and
+flexible than spherical harmonics, primarily because they re-
+quire fewer parameters (10 compared to 48 of SH) and can
+be easily adjusted to point in specific orientations.
+Background on Spherical Gaussians (SG). As shown
+in Figure 3, the geometric shape of Spherical Gaussians re-
+sembles lobes, allowing for more precise control of light and
+color representation in different directions. Different from
+spherical harmonics (SH) that have fixed shapes and cannot
+be adjusted in form or position, Spherical Gaussians (SG)
+offer flexibility in that: the orientation of lobe can be arbi-
+trarily adjusted by paramter µ, and the sharpness of lobe can
+be controlled by parameter λ (see visualizations of different
+µ and λ in Figure 3). This ability to dynamically adjust both
+orientation and sharpness gives Spherical Gaussians a dis-
+tinct advantage in rendering applications, allowing for more
+accurate and versatile representations.
+SG-based Color Representation. Based on Spherical
+Gaussians, the color C of each Gaussian is represented as:
+C(d; α, λ, µ) = αeλ(d·µ−1), (5)
+where d is the direction of the view,λ controls the sharpness
+of the lobe, α represents the coefficients for the three color
+channels, and µ denotes the orientation of the lobe’s peak.
+A larger value of λ results in a more concentrated lobe, in-
+creasing the sharpness of the effect.
+To further enhance the accuracy of color representation,
+we decompose the color into two components: diffuse, and
+view-dependent. The diffuse component captures the inher-
+ent color of the surface that is independent of the viewing
+angle; while the view-dependent component captures effects
+such as specular highlights, which vary depending on the
+
+===== PAGE 5 =====
+Figure 3: Visualization of Spherical Gaussians (SG) and how
+variations in µ and λ affect the orientation and sharpness of
+SG. Comparing the top and bottom row highlights the differ-
+ences in µ, which changes the orientation of the SG. Com-
+paring from left to right illustrates the effect of sharpness λ;
+as λ increases, the SG becomes more concentrated, resulting
+in a sharper peak.
+viewer’s position relative to the light source. Therefore, the
+color is represented as:
+C(d; α, λ, µ) = D + αeλ(d·µ−1), (6)
+where diffuse component D, and coefficients of each color
+channel α are 3-dimensional vectors, orientation of Spheri-
+cal Gaussian lobe’s peakµ is also 3-dimensional, and sharp-
+ness of Spherical Gaussian lobe λ is a scalar. Therefore, un-
+der SG-based representation, each Gaussian requires only10
+parameters (3 for diffuse, 7 for SG) to represent color. This
+is significantly fewer than the number of parameters ( 48)
+needed for each Gaussian under three degree SH-based color
+representation. This reduction in parameter count highlights
+the efficiency of Spherical Gaussians, making them a much
+more compact and computationally efficient alternative, and
+allows for faster rendering and training speeds.
+Multi-Axis Orthogonal Gaussians
+While a single Spherical Gaussian significantly enhances
+rendering speed, it can face challenges in handling complex
+lighting scenarios, which may result in some limitations in
+rendering quality. To address this issue, we employ multi-
+ple Spherical Gaussians to improve the modeling of color
+and light, where multiple Spherical Gaussians have differ-
+ent orientations and complement each other.
+However, simply accumulating multiple Spherical Gaus-
+sians led to suboptimal results (Fig. 4 third column). The
+primary issue was that the Gaussians failed to distribute the
+scene’s content effectively, resulting in clustering that fur-
+ther degraded the rendering quality. Spherical Gaussians can
+have arbitrary orientations of lobe (defined by µ), which
+make them more flexible, but more difficult to control and
+combine. E.g., in some scenes, without constraints on orien-
+tations of lobe, multiple Spherical Gaussians may be influ-
+enced by strong specular highlights in a certain orientation,
+and be optimized to similar orientations, failing to achieve
+the goal of complementarity.
+Multiple Orthogonal SGs. To address this limitation, we
+introduce multiple orthogonal Spherical Gaussians, where
+the orientations ( µ) of multiple gaussians are orthogonal
+to each other. This orthogonal arrangement allows different
+Spherical Gaussians to complement one another more effec-
+tively, ensuring better alignment and coherence in the rep-
+resentation. As a result, this approach enhances rendering
+quality by maintaining a more structured and comprehen-
+sive depiction of the scene’s color and light (Fig. 4 fourth
+column).
+Each orthogonal direction acts as a basis vector. By using
+these orthogonal directions, we achieve a more structured
+representation of the scene’s color and light, reducing the
+likelihood of clustering and ultimately leading to improved
+rendering results. Specifically, the colorC is represented as:
+C(d; α, λ) = D +
+3X
+i=1
+αieλi(d·µi−1), (7)
+µi · µj =
+1, if i = j,
+0, if i ̸= j. (8)
+Although introducing multiple Spherical Gaussians in-
+creases the number of parameters, this increase is minimized
+by using orthogonal axes. Each Spherical Gaussian aligned
+along orthogonal axes requires 4 parameters—coefficients
+for color α and sharpness λ. Additionally, 3 extra parame-
+ters are needed to define the orthogonal directions µ, result-
+ing in a total of 15 parameters for 3 orthogonal SGs. This is
+still far fewer than the48 parameters needed for third-degree
+spherical harmonics. This approach ensures that the multiple
+SGs complement each other effectively, optimizing the over-
+all representation while keeping the increase in complexity
+minimal. Moreover, our experiments show that the specific
+directions of the orthogonal axes are not crucial; the key is
+maintaining their orthogonality, which simplifies implemen-
+tation (see Supplementary material for experimental details).
+Mixing Spherical Harmonics and Spherical
+Gaussians
+While the use of multiple Spherical Gaussians significantly
+accelerates the 3D Gaussian Splatting process, it can lead
+to some loss in rendering quality due to compressed color
+paramters. To address this and further enhance the render-
+ing quality, we incorporate adaptive low-degree spherical
+harmonics (0-2 degree) along with Spherical Gaussians for
+color representation.
+Specifically, we adaptively adjust the degree used for SH
+based on the size of Gaussians. According to statistics on
+Gaussian radius (detailed in Supplementary material), we
+observed that most Gaussians in the scene are small. For
+small Gaussians, their coverage area is limited, and they do
+not exhibit significant view-dependent changes, mainly con-
+taining low-frequency color information. As a result, there
+is no need to use high-degree spherical harmonics (SH) to
+fit them, and lower-degree SH is sufficient to capture their
+characteristics effectively. For these smaller Gaussians, we
+
+===== PAGE 6 =====
+Ground Truth
+3Spherical Gaussiansw/o orientation constraints
+1Spherical Gaussian
+3Spherical Gaussians withorientation constraints
+Ours full(3SGsw/constraints&adaptivelow-degreeSH)
+Figure 4: Comparison of rendering results using different numbers of Spherical Gaussians (SGs). Using 3 SGs without ori-
+entation constraints can lead to inaccuracies ( e.g., incorrectly brightening shadowed areas), while with orthogonal orientation
+constraints, the rendering quality is improved. Ours full further integrates adaptive low-degree SH for better rendering quality.
+calculate their size based on the matrix of their 2D projec-
+tion, and dynamically choose to use 0th, 1st, or 2nd degree
+spherical harmonics according to their sizes. While for large
+Gaussians that are of a small proportion, we use 2nd de-
+gree spherical harmonics. This adaptive approach allows us
+to achieve a balance between rendering speed and quality,
+ensuring that each Gaussian is represented with the appro-
+priate level of detail:
+C(d; α, λ) = SH + αeλ(d·µ−1). (9)
+Experiments
+Experiment Settings
+Datasets and Metrics. We conduct our experiments on
+three commonly used datasets: Mip-NeRF360 (Barron et al.
+2022), Tanks&Temples (Knapitsch et al. 2017), and Deep-
+Blending (Hedman et al. 2018).
+To evaluate SG-Splatting, we use several metrics. Qual-
+ity is measured using PSNR, SSIM (Wang et al. 2004),
+and LPIPS (Zhang et al. 2018), which assess image fi-
+delity, structural similarity, and perceptual quality, respec-
+tively. Rendering speed is measured in FPS, indicating the
+method’s efficiency in real-time applications. We also report
+training time to measure computational efficiency.
+All experiments are conducted on an NVIDIA RTX 3090
+GPU to ensure fairness and avoid performance variations
+due to hardware differences.
+Implementation. The learning rate hyperparameters for
+training are consistent with those used in 3D-GS to ensure
+fair comparison. The total number of training iterations is set
+to 30,000. After the initial 2,000 iterations, Spherical Gaus-
+sians are introduced into the training process with a learning
+rate of 0.0025. This staged introduction helps in gradually
+refining the model’s ability to capture complex lighting and
+shading effects, leading to improved rendering quality. For
+multiple orthogonal SGs, in our experiments, based on ob-
+servations that the specific directions of orthogonal axes are
+not crucial while the key is the orthogonality (see experi-
+ments in Supplementary material), we selected the orthogo-
+nal axes as (1, 0, 0), (0, 1, 0), and (0, 0, 1) for ease of imple-
+mentation.
+Comparisons
+Baselines. We compare SG-Splatting with two groups of
+baseline methods. 1) The first group includes original 3D-
+GS, Compact3D (Navaneet et al. 2023) and Eagles (Girish,
+Gupta, and Shrivastava 2023), which primarily focus on
+post-processing trained models through model compression
+techniques to reduce the number of Gaussian primitives and
+improve efficiency. 2) The second group, including Mini-
+splatting (Fang and Wang 2024) and GES (Hamdi et al.
+2024), optimizes the 3D-GS model and training process to
+enhance rendering quality and speed. Our SG-Splatting can
+be seamlessly integrated into these approaches, offering ad-
+ditional improvements in efficiency.
+Results and Analysis
+Table 1 presents a comprehensive comparison, including the
+performance of our SG-Splatting, and the effects of inte-
+grating SG-Splatting into other existing approaches. Fig. 5
+shows the qualitative comparison results. In comparison
+with the first group of baselines, our method achieves the
+fastest rendering speed, 1.4 ∼ 1.5 times faster than orig-
+inal 3D-GS; with rendering quality slightly lower than
+the original 3D-GS, but consistently outperforming other
+compression-based post-processing methods, particularly in
+the most complex scenes from Mip-NeRF360. In the second
+group of baselines, after integrating our SG-based color rep-
+resentation into these methods (Mini-splatting and GES), we
+observe a significant improvement in rendering speed across
+most scenes, with only a minor reduction in rendering qual-
+ity. This demonstrates the effectiveness of our approach in
+improving efficiency while maintaining high visual fidelity.
+Furthermore, SG-Splatting demonstrates a storage size re-
+duction of approximately 46.7% ∼ 47.3% between datasets
+compared to 3D Gaussian Splatting, further enhancing its
+practicality for memory-constrained environments.
+Ablation Studies
+We conducted ablation studies by progressively adding our
+components to the base 3D-GS model to evaluate their im-
+pact (Table 2 and Fig. 4). Specifically, we tested the effects
+on rendering speed, rendering quality, and model size, eval-
+uating how each component contributes to overall perfor-
+mance.
+3DGS + Multi-Axis Orthogonal SG: Introducing orthog-
+onal SGs achieves a significant improvement in rendering
+speed and model size, at the cost of a slight decrease in
+rendering quality. Specifically, the rendering speed increases
+from 247 to 371 FPS, while the model size is reduced from
+781.46 to 364.01 MB. Although there is a minor drop in
+PSNR (from 27.410 to 26.845) and SSIM (from 0.814 to
+0.803), the trade-off results in a much more efficient model.
+
+===== PAGE 7 =====
+GroundTruthOurs3D-GSMini-splattingGes-splatting
+Compact3DEAGLES
+Figure 5: Qualitative comparison of our SG-Splatting with baseline methods.
+Dataset Mip-NeRF360 Tanks&Temples DeepBlending
+Matrices PSNR↑ SSIM↑ LPIPS↓ FPS↑ Train↓ PSNR↑ SSIM↑ LPIPS↓ FPS↑ Train↓ PSNR↑ SSIM↑ LPIPS↓ FPS↑ Train↓
+3D-GS 27.401 0.814 0.217 247 25min29s 23.728 0.845 0.179 312 14min40s 29.508 0.900 0.247 233 24min18s
+Compact3D 26.969 0.797 0.245 293 35min41s23.323 0.831 0.202 383 20min41s29.749 0.901 0.259 331 19min50s
+EAGLES 27.140 0.805 0.239 155 21min55s 23.342 0.836 0.200 245 11min22s29.951 0.907 0.249 156 19min41s
+SG-Splatting27.267 0.813 0.218 334 24min11s23.465 0.840 0.188 472 13min21s 29.5700.901 0.247 344 22min25s
+Mini-splatting27.345 0.822 0.217 576 21min17s 23.259 0.836 0.202 685 14min12s 29.962 0.908 0.248 656 18min15s
+SG-mini-Splatting26.933 0.835 0.222 681 21min05s 23.036 0.833 0.205 861 12min37s 29.9160.908 0.253 773 17min40s
+GES 26.901 0.794 0.252 421 20min14s 23.414 0.837 0.198 518 11min02s 29.628 0.901 0.252 398 19min04s
+SG-GES 26.703 0.791 0.260 520 17min58s 23.234 0.832 0.202 626 10min01s29.704 0.902 0.251 488 17min37s
+Table 1: Detailed comparison of our SG-Splatting with 3D-GS and other baseline methods across various datasets. In com-
+parison with the first group of baselines, we achieve the fastest rendering speed; and in the second group of baselines, after
+integrating our SG-Splatting into Mini-splatting and GES, the rendering speed is further improved, showing that our approach
+enhances efficieny while maintaining high visual quality. The best and second best scrores in each group are highlighted in
+yellow and pink .
+Ablation Setup PSNR↑ SSIM↑ LPIPS↓ FPS↑ Size(MB)↓
+3D Gaussian Splatting27.410 0.814 0.217 247 781.46
+3DGS+Multi-Axis Orthogonal SG26.845 0.803 0.229 371 364.013DGS + Low Degree SH27.206 0.812 0.219 341 517.453DGS+Multi-Axis Orthogonal SG+Mix SH (Ours)27.267 0.813 0.218 334 416.02
+Table 2: Ablation studies on the Mip-NeRF360 dataset.
+Dataset Mip-NeRF360 Tanks&Temples DeepBlending
+3D Gaussian Splatting781.46 434.10 662.26
+SG-Splatting 416.02 228.78 357.45
+Table 3: Comparison of storage size (in MB) for 3D Gaus-
+sian Splatting and SG-Splatting.
+The orthogonal arrangement of the SGs still captures the de-
+tails of the scene effectively, enabling faster rendering and
+better storage efficiency.
+3DGS + Low Degree SH:To rigorously evaluate the effec-
+tiveness of spherical Gaussians (SG), we also conducted ex-
+periments using low-degree spherical harmonics (SH). This
+setup simplifies the representation, achieving a moderate im-
+provement in rendering speed (341 FPS compared to the
+original 247 FPS) and a reduction in model size to 517.45
+MB.
+3DGS + Multi-Axis Orthogonal SG + Mix SH (Ours):
+In this configuration, we combine the advantages of low-
+degree spherical harmonics (SH) and spherical Gaussians
+(SG) to achieve a balanced trade-off between rendering
+quality, speed, and model size. Compared to the original
+3D-GS, our method maintains comparable rendering qual-
+ity (PSNR: 27.267 vs. 27.410, SSIM: 0.813 vs. 0.814)
+while significantly improving efficiency. Specifically, our
+method achieves a higher rendering speed (334 FPS com-
+pared to 247 FPS) and a notably smaller model size (416.02
+MB compared to 781.46 MB). Using the complementary
+strengths of SG and low-degree SH, this approach pro-
+vides an effective solution for scenarios requiring both high-
+performance and compact model storage.
+
+===== PAGE 8 =====
+Conclusion
+In this paper, we propose SG-Splatting, a 3D Gaussian
+Splatting technique designed to address the limitations of
+3D Gaussian Splatting, especially the excessive number
+of third-degree spherical harmonic coefficients that hinders
+rendering speed. Our approach utilizes Spherical Gaussians
+for a more compact color representation, to mitigate the is-
+sues of coefficient overload and slow inference times. Ad-
+ditionally, we incorporate multiple Spherical Gaussians and
+mix them with adaptive low-degree spherical harmonics to
+enhance rendering quality while maintaining fast rendering
+speeds. Moreover, SG-Splatting is designed to be plug-and-
+play, allowing it to be easily integrated into other accelera-
+tion techniques without compromising performance.
+References
+Barron, J. T.; Mildenhall, B.; Verbin, D.; Srinivasan, P. P.;
+and Hedman, P. 2022. Mip-NeRF 360: Unbounded Anti-
+Aliased Neural Radiance Fields. In Proceedings of the
+IEEE/CVF Conference on Computer Vision and Pattern
+Recognition (CVPR), 5470–5479.
+Fan, Z.; Wang, K.; Wen, K.; Zhu, Z.; Xu, D.; and Wang, Z.
+2023. LightGaussian: Unbounded 3D Gaussian Compres-
+sion with 15x Reduction and 200+ FPS. arXiv:2311.17245.
+Fang, G.; and Wang, B. 2024. Mini-Splatting: Represent-
+ing Scenes with a Constrained Number of Gaussians. arXiv
+preprint arXiv:2403.14166.
+Girish, S.; Gupta, K.; and Shrivastava, A. 2023. Eagles: Ef-
+ficient accelerated 3d gaussians with lightweight encodings.
+arXiv preprint arXiv:2312.04564.
+Hamdi, A.; Melas-Kyriazi, L.; Mai, J.; Qian, G.; Liu, R.;
+V ondrick, C.; Ghanem, B.; and Vedaldi, A. 2024. GES
+: Generalized Exponential Splatting for Efficient Radiance
+Field Rendering. In Proceedings of the IEEE/CVF Confer-
+ence on Computer Vision and Pattern Recognition (CVPR) ,
+19812–19822.
+Hedman, P.; Philip, J.; Price, T.; Frahm, J.-M.; Drettakis, G.;
+and Brostow, G. 2018. Deep Blending for Free-viewpoint
+Image-based Rendering. ACM Transactions on Graphics
+(Proc. SIGGRAPH Asia), 37(6): 257:1–257:15.
+Hedman, P.; Srinivasan, P. P.; Mildenhall, B.; Barron, J. T.;
+and Debevec, P. 2021. Baking Neural Radiance Fields for
+Real-Time View Synthesis. ICCV.
+Hinton, G.; Vinyals, O.; and Dean, J. 2015. Distill-
+ing the knowledge in a neural network. arXiv preprint
+arXiv:1503.02531.
+Jacob, B.; Kligys, S.; Chen, B.; Zhu, M.; Tang, M.; Howard,
+A.; Adam, H.; and Kalenichenko, D. 2018. Quantization and
+training of neural networks for efficient integer-arithmetic-
+only inference. In Proceedings of the IEEE Conference on
+Computer Vision and Pattern Recognition (CVPR) , 2704–
+2713.
+Jiang, Y .; Yu, C.; Xie, T.; Li, X.; Feng, Y .; Wang, H.; Li,
+M.; Lau, H.; Gao, F.; Yang, Y .; and Jiang, C. 2024. VR-GS:
+A Physical Dynamics-Aware Interactive Gaussian Splatting
+System in Virtual Reality.arXiv preprint arXiv:2401.16663.
+Kerbl, B.; Kopanas, G.; Leimk ¨uhler, T.; and Drettakis, G.
+2023. 3D Gaussian Splatting for Real-Time Radiance Field
+Rendering. ACM Transactions on Graphics , 42(4): 139:1–
+139:14.
+Knapitsch, A.; Park, J.; Zhou, Q.-Y .; and Koltun, V . 2017.
+Tanks and Temples: Benchmarking Large-Scale Scene Re-
+construction. ACM Transactions on Graphics, 36(4): 78:1–
+78:13.
+Mildenhall, B.; Srinivasan, P. P.; Tancik, M.; Barron, J. T.;
+Ramamoorthi, R.; and Ng, R. 2020. NeRF: Representing
+Scenes as Neural Radiance Fields for View Synthesis. In
+European Conference on Computer Vision, 405–421.
+M¨uller, T.; Evans, A.; Schied, C.; and Keller, A. 2022.
+Instant Neural Graphics Primitives with a Multiresolution
+Hash Encoding. ACM Trans. Graph., 41(4): 102:1–102:15.
+Navaneet, K.; Meibodi, K. P.; Koohpayegani, S. A.; and Pir-
+siavash, H. 2023. Compact3D: Compressing Gaussian Splat
+Radiance Field Models with Vector Quantization. arXiv
+preprint arXiv:2311.18159.
+Ng, R.; Ramamoorthi, R.; and Hanrahan, P. 2003. All-
+frequency shadows using non-linear wavelet lighting ap-
+proximation. ACM Trans. Graph., 22(3): 376–381.
+Niedermayr, S.; Stumpfegger, J.; and Westermann, R. 2023.
+Compressed 3D Gaussian Splatting for Accelerated Novel
+View Synthesis. arXiv:2401.02436.
+Sch¨onberger, J. L.; and Frahm, J.-M. 2016. Structure-from-
+Motion Revisited. In Proceedings of the IEEE Confer-
+ence on Computer Vision and Pattern Recognition (CVPR) ,
+4104–4113.
+Sch¨onberger, J. L.; Zheng, E.; Pollefeys, M.; and Frahm, J.-
+M. 2016. Pixelwise View Selection for Unstructured Multi-
+View Stereo. In European Conference on Computer Vision
+(ECCV).
+Shao, R.; Sun, J.; Peng, C.; Zheng, Z.; Zhou, B.; Zhang, H.;
+and Liu, Y . 2024. Control4D: Efficient 4D Portrait Editing
+with Text. In Proceedings of the IEEE Conference on Com-
+puter Vision and Pattern Recognition (CVPR).
+Wang, J.; Ren, P.; Gong, M.; Snyder, J.; and Guo, B. 2009.
+All-frequency rendering of dynamic, spatially-varying re-
+flectance. ACM Trans. Graph., 28(5): 1–10.
+Wang, Z.; Bovik, A.; Sheikh, H.; and Simoncelli, E. 2004.
+Image quality assessment: from error visibility to structural
+similarity. IEEE Transactions on Image Processing , 13(4):
+600–612.
+Xie, T.; Zong, Z.; Qiu, Y .; Li, X.; Feng, Y .; Yang, Y .;
+and Jiang, C. 2023. PhysGaussian: Physics-Integrated
+3D Gaussians for Generative Dynamics. arXiv preprint
+arXiv:2311.12198.
+Xu, K.; Sun, W.-L.; Dong, Z.; Zhao, D.-Y .; Wu, R.-D.; and
+Hu, S.-M. 2013. Anisotropic Spherical Gaussians. ACM
+Transactions on Graphics, 32(6): 209:1–209:11.
+Yang, Z.; Yang, H.; Pan, Z.; and Zhang, L. 2024. Real-time
+Photorealistic Dynamic Scene Representation and Render-
+ing with 4D Gaussian Splatting. InInternational Conference
+on Learning Representations (ICLR).
+
+===== PAGE 9 =====
+Yu, A.; Li, R.; Tancik, M.; Li, H.; Ng, R.; and Kanazawa, A.
+2021. PlenOctrees for Real-time Rendering of Neural Radi-
+ance Fields. In Proceedings of the IEEE/CVF International
+Conference on Computer Vision (ICCV), 5752–5761.
+Zhang, R.; Isola, P.; Efros, A. A.; Shechtman, E.; and Wang,
+O. 2018. The Unreasonable Effectiveness of Deep Features
+as a Perceptual Metric. In Proceedings of the IEEE Confer-
+ence on Computer Vision and Pattern Recognition (CVPR) ,
+586–595.
+Zhong, L.; Yu, H.-X.; Wu, J.; and Li, Y . 2024. Reconstruc-
+tion and Simulation of Elastic Objects with Spring-Mass
+3D Gaussians. European Conference on Computer Vision
+(ECCV).
+Zhou, X.; Lin, Z.; Shan, X.; Wang, Y .; Sun, D.; and Yang,
+M.-H. 2024. DrivingGaussian: Composite Gaussian Splat-
+ting for Surrounding Dynamic Autonomous Driving Scenes.
+In Proceedings of the IEEE/CVF Conference on Computer
+Vision and Pattern Recognition (CVPR), 21634–21643.
+Zwicker, M.; Pfister, H.; van Baar, J.; and Gross, M. 2002.
+EW A Splatting. IEEE Transactions on Visualization and
+Computer Graphics, 8(3): 223–238.
+Reproducibility Checklist
+1. This paper:
+• Includes a conceptual outline and/or pseudocode de-
+scription of AI methods introduced (yes)
+• Clearly delineates statements that are opinions, hy-
+pothesis, and speculation from objective facts and re-
+sults (yes)
+• Provides well marked pedagogical references for less-
+familiare readers to gain background necessary to
+replicate the paper (yes)
+2. Does this paper make theoretical contributions? (yes)
+If yes, please complete the list below.
+• All assumptions and restrictions are stated clearly and
+formally. (yes)
+• All novel claims are stated formally. (yes)
+• Proofs of all novel claims are included. (yes)
+• Proof sketches or intuitions are given for complex
+and/or novel results. (yes)
+• Appropriate citations to theoretical tools used are
+given. (yes)
+• All theoretical claims are demonstrated empirically to
+hold. (yes)
+• All experimental code used to eliminate or disprove
+claims is included. (yes)
+3. Does this paper rely on one or more datasets? (yes)
+If yes, please complete the list below.
+• A motivation is given for why the experiments are con-
+ducted on the selected datasets. (yes)
+• All novel datasets introduced in this paper are included
+in a data appendix. (NA)
+• All novel datasets introduced in this paper will be
+made publicly available upon publication of the pa-
+per with a license that allows free usage for research
+purposes. (NA)
+• All datasets drawn from the existing literature (po-
+tentially including authors’ own previously published
+work) are accompanied by appropriate citations. (yes)
+• All datasets drawn from the existing literature (po-
+tentially including authors’ own previously published
+work) are publicly available. (yes)
+• All datasets that are not publicly available are de-
+scribed in detail, with explanation why publicly avail-
+able alternatives are not scientifically satisficing. (NA)
+4. Does this paper include computational experiments?
+(yes)
+If yes, please complete the list below.
+• Any code required for pre-processing data is included
+in the appendix. (yes)
+• All source code required for conducting and analyzing
+the experiments is included in a code appendix. (yes)
+• All source code required for conducting and analyzing
+the experiments will be made publicly available upon
+publication of the paper with a license that allows free
+usage for research purposes. (yes)
+• All source code implementing new methods have com-
+ments detailing the implementation, with references to
+the paper where each step comes from. (yes)
+• If an algorithm depends on randomness, then the
+method used for setting seeds is described in a way
+sufficient to allow replication of results. (NA)
+• This paper specifies the computing infrastructure used
+for running experiments (hardware and software), in-
+cluding GPU/CPU models; amount of memory; oper-
+ating system; names and versions of relevant software
+libraries and frameworks. (partial)
+• This paper states the number of algorithm runs used to
+compute each reported result. (yes)
+• Analysis of experiments goes beyond single-
+dimensional summaries of performance (e.g., average;
+median) to include measures of variation, confidence,
+or other distributional information. (no)
+• The significance of any improvement or decrease in
+performance is judged using appropriate statistical
+tests (e.g., Wilcoxon signed-rank). (no)
+• This paper lists all final (hyper-)parameters used for
+each model/algorithm in the paper’s experiments.
+(yes)
+• This paper states the number and range of values tried
+per (hyper-) parameter during development of the pa-
+per, along with the criterion used for selecting the final
+parameter setting. (partial)

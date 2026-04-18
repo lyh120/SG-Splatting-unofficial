@@ -39,6 +39,7 @@ def evaluate_split(views, gaussians, pipeline, background, dataset, lpips_net=No
                 sg_weight=1.0,
                 use_adaptive_low_sh=dataset.use_adaptive_low_sh,
                 adaptive_sh_max_degree=dataset.adaptive_sh_max_degree,
+                adaptive_sh_size_metric=dataset.adaptive_sh_size_metric,
                 sh_small_radius_threshold=dataset.sh_small_radius_threshold,
                 sh_medium_radius_threshold=dataset.sh_medium_radius_threshold,
             )
@@ -105,6 +106,7 @@ if __name__ == "__main__":
         diffuse_bias=dataset.sg_diffuse_bias,
         sg_axis_mode=dataset.sg_axis_mode,
         adaptive_sh_max_degree=dataset.adaptive_sh_max_degree,
+        adaptive_sh_size_metric=dataset.adaptive_sh_size_metric,
     )
     scene = Scene(dataset, gaussians, load_iteration=args.iteration, shuffle=False)
     pipe = pipeline.extract(args)

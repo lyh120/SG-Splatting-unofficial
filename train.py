@@ -67,6 +67,7 @@ def evaluate(scene, gaussians, pipe, background):
                 sg_weight=1.0,
                 use_adaptive_low_sh=getattr(scene.dataset_args, "use_adaptive_low_sh", False),
                 adaptive_sh_max_degree=getattr(scene.dataset_args, "adaptive_sh_max_degree", 2),
+                adaptive_sh_size_metric=getattr(scene.dataset_args, "adaptive_sh_size_metric", "approx"),
                 sh_small_radius_threshold=getattr(scene.dataset_args, "sh_small_radius_threshold", 1.5),
                 sh_medium_radius_threshold=getattr(scene.dataset_args, "sh_medium_radius_threshold", 6.0),
             )
@@ -90,6 +91,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         diffuse_bias=dataset.sg_diffuse_bias,
         sg_axis_mode=dataset.sg_axis_mode,
         adaptive_sh_max_degree=dataset.adaptive_sh_max_degree,
+        adaptive_sh_size_metric=dataset.adaptive_sh_size_metric,
     )
     scene = Scene(dataset, gaussians, resolution_scales=[1.0])
     gaussians.training_setup(opt)
@@ -108,6 +110,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
     for iteration in range(first_iter, opt.iterations + 1):
         gaussians.update_learning_rate(iteration)
+        sg_phase_enabled = iteration >= dataset.sg_start_iter
+        gaussians.set_sg_phase(sg_phase_enabled, strict_lrs=opt.paper_strict_sg_lrs)
 
         if not viewpoint_stack:
             viewpoint_stack = scene.getTrainCameras(scale=1.0).copy()
@@ -121,8 +125,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             pipe,
             bg,
             sg_weight=sg_weight,
-            use_adaptive_low_sh=dataset.use_adaptive_low_sh,
+            use_adaptive_low_sh=dataset.use_adaptive_low_sh and sg_phase_enabled,
             adaptive_sh_max_degree=dataset.adaptive_sh_max_degree,
+            adaptive_sh_size_metric=dataset.adaptive_sh_size_metric,
             sh_small_radius_threshold=dataset.sh_small_radius_threshold,
             sh_medium_radius_threshold=dataset.sh_medium_radius_threshold,
         )
@@ -135,7 +140,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         Ll1 = l1_loss(image, gt_image)
         recon_loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
-        reg_loss = opt.lambda_sg_reg * gaussians.sg_regularization()
+        reg_loss = opt.lambda_sg_reg * gaussians.sg_regularization() if sg_phase_enabled else torch.zeros((), device="cuda")
         loss = recon_loss + reg_loss
         loss.backward()
 
@@ -195,6 +200,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 tb_writer.add_scalar("train/loss_sg_reg", reg_loss.item(), iteration)
                 tb_writer.add_scalar("train/num_points", gaussians.get_xyz.shape[0], iteration)
                 tb_writer.add_scalar("train/sg_weight", sg_weight, iteration)
+                tb_writer.add_scalar("train/sg_phase_enabled", float(sg_phase_enabled), iteration)
 
             if iteration in testing_iterations:
                 metrics = evaluate(scene, gaussians, pipe, background)

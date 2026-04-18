@@ -20,6 +20,16 @@ from utils.system_utils import mkdir_p
 
 
 class GaussianModel:
+    @staticmethod
+    def _normalize_sg_axis_mode(mode: str) -> str:
+        alias_map = {
+            "orthogonal": "orthogonal_learned",
+            "orthogonal_learned": "orthogonal_learned",
+            "orthogonal_fixed": "orthogonal_fixed",
+            "free": "free",
+        }
+        return alias_map.get(mode, "orthogonal_learned")
+
     def setup_functions(self):
         def build_covariance_from_scaling_rotation(scaling, scaling_modifier, rotation):
             L = build_scaling_rotation(scaling_modifier * scaling, rotation)
@@ -39,16 +49,23 @@ class GaussianModel:
         num_sg: int = 3,
         sg_init_sharpness: float = 8.0,
         diffuse_bias: float = 0.5,
-        sg_axis_mode: str = "orthogonal",
+        sg_axis_mode: str = "orthogonal_learned",
         adaptive_sh_max_degree: int = 2,
+        adaptive_sh_size_metric: str = "approx",
     ):
         self.active_sh_degree = 0
         self.max_sh_degree = sh_degree
-        self.sg_axis_mode = sg_axis_mode if sg_axis_mode in {"free", "orthogonal"} else "orthogonal"
-        self.num_sg = min(num_sg, 6) if self.sg_axis_mode == "orthogonal" else num_sg
+        self.sg_axis_mode = self._normalize_sg_axis_mode(sg_axis_mode)
+        if self.sg_axis_mode == "orthogonal_fixed":
+            self.num_sg = min(num_sg, 3)
+        elif self.sg_axis_mode == "orthogonal_learned":
+            self.num_sg = min(num_sg, 6)
+        else:
+            self.num_sg = num_sg
         self.sg_init_sharpness = sg_init_sharpness
         self.diffuse_bias = diffuse_bias
         self.adaptive_sh_max_degree = adaptive_sh_max_degree
+        self.adaptive_sh_size_metric = adaptive_sh_size_metric if adaptive_sh_size_metric in {"approx", "projected_cov"} else "approx"
 
         self._xyz = torch.empty(0)
         self._diffuse = torch.empty(0)
@@ -92,6 +109,7 @@ class GaussianModel:
             self.diffuse_bias,
             self.sg_axis_mode,
             self.adaptive_sh_max_degree,
+            self.adaptive_sh_size_metric,
         )
 
     def restore(self, model_args, training_args):
@@ -99,7 +117,7 @@ class GaussianModel:
         if len(base_fields) < 17:
             raise RuntimeError("Checkpoint format is too old and unsupported.")
 
-        if len(base_fields) >= 21:
+        if len(base_fields) >= 22:
             self.active_sh_degree = base_fields[0]
             self._xyz = base_fields[1]
             self._diffuse = base_fields[2]
@@ -119,8 +137,32 @@ class GaussianModel:
             self.num_sg = base_fields[16]
             self.sg_init_sharpness = base_fields[17]
             self.diffuse_bias = base_fields[18]
-            self.sg_axis_mode = base_fields[19]
+            self.sg_axis_mode = self._normalize_sg_axis_mode(base_fields[19])
             self.adaptive_sh_max_degree = base_fields[20]
+            self.adaptive_sh_size_metric = base_fields[21]
+        elif len(base_fields) >= 21:
+            self.active_sh_degree = base_fields[0]
+            self._xyz = base_fields[1]
+            self._diffuse = base_fields[2]
+            self._sg_axis = base_fields[3]
+            self._sg_basis_rotation = base_fields[4]
+            self._sg_sharpness = base_fields[5]
+            self._sg_amplitude = base_fields[6]
+            self._low_sh = base_fields[7]
+            self._scaling = base_fields[8]
+            self._rotation = base_fields[9]
+            self._opacity = base_fields[10]
+            self.max_radii2D = base_fields[11]
+            xyz_gradient_accum = base_fields[12]
+            denom = base_fields[13]
+            opt_dict = base_fields[14]
+            self.spatial_lr_scale = base_fields[15]
+            self.num_sg = base_fields[16]
+            self.sg_init_sharpness = base_fields[17]
+            self.diffuse_bias = base_fields[18]
+            self.sg_axis_mode = self._normalize_sg_axis_mode(base_fields[19])
+            self.adaptive_sh_max_degree = base_fields[20]
+            self.adaptive_sh_size_metric = "approx"
         else:
             self.active_sh_degree = base_fields[0]
             self._xyz = base_fields[1]
@@ -141,13 +183,16 @@ class GaussianModel:
             self.diffuse_bias = base_fields[16]
             self.sg_axis_mode = "free"
             self.adaptive_sh_max_degree = 0
+            self.adaptive_sh_size_metric = "approx"
             rots = torch.zeros((self._xyz.shape[0], 4), device="cuda")
             rots[:, 0] = 1.0
             self._sg_basis_rotation = nn.Parameter(rots.requires_grad_(True))
             self._low_sh = nn.Parameter(
                 torch.zeros((self._xyz.shape[0], 3, 8), device="cuda", dtype=self._xyz.dtype).requires_grad_(True)
             )
-        if self.sg_axis_mode == "orthogonal":
+        if self.sg_axis_mode == "orthogonal_fixed":
+            self.num_sg = min(self.num_sg, 3)
+        elif self.sg_axis_mode == "orthogonal_learned":
             self.num_sg = min(self.num_sg, 6)
         self.training_setup(training_args)
         self.xyz_gradient_accum = xyz_gradient_accum
@@ -176,7 +221,7 @@ class GaussianModel:
 
     @property
     def get_sg_axis(self):
-        if self.sg_axis_mode == "orthogonal":
+        if self.sg_axis_mode in {"orthogonal_fixed", "orthogonal_learned"}:
             canonical_axis = torch.tensor(
                 [
                     [1.0, 0.0, 0.0],
@@ -190,6 +235,8 @@ class GaussianModel:
                 dtype=self._xyz.dtype,
             )
             canonical_axis = canonical_axis.unsqueeze(0).expand(self._xyz.shape[0], -1, -1)
+            if self.sg_axis_mode == "orthogonal_fixed":
+                return canonical_axis[:, : self.num_sg, :]
             basis_rotation = build_rotation(F.normalize(self._sg_basis_rotation, dim=-1))
             rotated_axis = torch.matmul(canonical_axis, basis_rotation.transpose(1, 2))
             return F.normalize(rotated_axis[:, : self.num_sg, :], dim=-1)
@@ -209,6 +256,10 @@ class GaussianModel:
 
     def get_covariance(self, scaling_modifier=1):
         return self.covariance_activation(self.get_scaling, scaling_modifier, self._rotation)
+
+    def get_covariance_matrix(self, scaling_modifier=1):
+        L = build_scaling_rotation(scaling_modifier * self.get_scaling, self._rotation)
+        return L @ L.transpose(1, 2)
 
     def sg_regularization(self):
         return self.get_sg_amplitude.mean() + 0.1 * self.get_sg_sharpness.mean() + 0.01 * self.get_low_sh.abs().mean()
@@ -252,18 +303,30 @@ class GaussianModel:
         self.percent_dense = training_args.percent_dense
         self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         self.denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
+        self._base_lrs = {
+            "xyz": training_args.position_lr_init * self.spatial_lr_scale,
+            "diffuse": training_args.diffuse_lr,
+            "sg_axis": training_args.sg_axis_lr,
+            "sg_basis_rotation": training_args.sg_basis_lr,
+            "sg_sharpness": training_args.sg_sharpness_lr,
+            "sg_amplitude": training_args.sg_color_lr,
+            "low_sh": training_args.sh_lr,
+            "opacity": training_args.opacity_lr,
+            "scaling": training_args.scaling_lr,
+            "rotation": training_args.rotation_lr,
+        }
 
         params = [
-            {"params": [self._xyz], "lr": training_args.position_lr_init * self.spatial_lr_scale, "name": "xyz"},
-            {"params": [self._diffuse], "lr": training_args.diffuse_lr, "name": "diffuse"},
-            {"params": [self._sg_axis], "lr": training_args.sg_axis_lr, "name": "sg_axis"},
-            {"params": [self._sg_basis_rotation], "lr": training_args.sg_basis_lr, "name": "sg_basis_rotation"},
-            {"params": [self._sg_sharpness], "lr": training_args.sg_sharpness_lr, "name": "sg_sharpness"},
-            {"params": [self._sg_amplitude], "lr": training_args.sg_color_lr, "name": "sg_amplitude"},
-            {"params": [self._low_sh], "lr": training_args.sh_lr, "name": "low_sh"},
-            {"params": [self._opacity], "lr": training_args.opacity_lr, "name": "opacity"},
-            {"params": [self._scaling], "lr": training_args.scaling_lr, "name": "scaling"},
-            {"params": [self._rotation], "lr": training_args.rotation_lr, "name": "rotation"},
+            {"params": [self._xyz], "lr": self._base_lrs["xyz"], "name": "xyz"},
+            {"params": [self._diffuse], "lr": self._base_lrs["diffuse"], "name": "diffuse"},
+            {"params": [self._sg_axis], "lr": self._base_lrs["sg_axis"], "name": "sg_axis"},
+            {"params": [self._sg_basis_rotation], "lr": self._base_lrs["sg_basis_rotation"], "name": "sg_basis_rotation"},
+            {"params": [self._sg_sharpness], "lr": self._base_lrs["sg_sharpness"], "name": "sg_sharpness"},
+            {"params": [self._sg_amplitude], "lr": self._base_lrs["sg_amplitude"], "name": "sg_amplitude"},
+            {"params": [self._low_sh], "lr": self._base_lrs["low_sh"], "name": "low_sh"},
+            {"params": [self._opacity], "lr": self._base_lrs["opacity"], "name": "opacity"},
+            {"params": [self._scaling], "lr": self._base_lrs["scaling"], "name": "scaling"},
+            {"params": [self._rotation], "lr": self._base_lrs["rotation"], "name": "rotation"},
         ]
 
         self.optimizer = torch.optim.Adam(params, lr=0.0, eps=1e-15)
@@ -281,6 +344,25 @@ class GaussianModel:
                 param_group["lr"] = lr
                 return lr
         return None
+
+    def set_sg_phase(self, enabled: bool, strict_lrs: bool = False):
+        for param_group in self.optimizer.param_groups:
+            name = param_group["name"]
+            if name not in {"sg_axis", "sg_basis_rotation", "sg_sharpness", "sg_amplitude", "low_sh"}:
+                continue
+
+            if not enabled:
+                param_group["lr"] = 0.0
+                continue
+
+            if self.sg_axis_mode == "orthogonal_fixed" and name == "sg_basis_rotation":
+                param_group["lr"] = 0.0
+                continue
+
+            if strict_lrs and name in {"sg_axis", "sg_basis_rotation", "sg_sharpness", "sg_amplitude", "low_sh"}:
+                param_group["lr"] = self._base_lrs["sg_amplitude"]
+            else:
+                param_group["lr"] = self._base_lrs[name]
 
     def construct_list_of_attributes(self):
         attributes = ["x", "y", "z", "nx", "ny", "nz"]

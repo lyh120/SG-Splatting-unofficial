@@ -50,11 +50,12 @@ class ModelParams(ParamGroup):
         self.eval = False
         self.sg_init_sharpness = 8.0
         self.sg_diffuse_bias = 0.5
-        self.sg_axis_mode = "orthogonal"
+        self.sg_axis_mode = "orthogonal_learned"
         self.sg_start_iter = 2000
         self.sg_warmup_iters = 500
         self.use_adaptive_low_sh = False
         self.adaptive_sh_max_degree = 2
+        self.adaptive_sh_size_metric = "approx"
         self.sh_small_radius_threshold = 1.5
         self.sh_medium_radius_threshold = 6.0
         super().__init__(parser, "Loading Parameters", sentinel)
@@ -99,6 +100,7 @@ class OptimizationParams(ParamGroup):
         self.densify_from_iter = 500
         self.densify_until_iter = 15_000
         self.densify_grad_threshold = 0.0002
+        self.paper_strict_sg_lrs = False
         super().__init__(parser, "Optimization Parameters")
 
 

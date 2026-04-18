@@ -6,7 +6,7 @@ from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianR
 
 from scene.gaussian_model import GaussianModel
 from utils.sg_utils import eval_sg
-from utils.sh_utils import RGB2SH, eval_sh
+from utils.sh_utils import RGB2SH, SH2RGB, eval_sh
 
 
 def _estimate_projected_radius(pc: GaussianModel, viewpoint_camera, tanfovx: float, tanfovy: float):
@@ -20,6 +20,49 @@ def _estimate_projected_radius(pc: GaussianModel, viewpoint_camera, tanfovx: flo
     focal = 0.5 * (fx + fy)
     world_radius = pc.get_scaling.max(dim=1).values
     return focal * world_radius / depth
+
+
+def _estimate_projected_cov_radius(pc: GaussianModel, viewpoint_camera, tanfovx: float, tanfovy: float, scaling_modifier: float):
+    ones = torch.ones((pc.get_xyz.shape[0], 1), device=pc.get_xyz.device, dtype=pc.get_xyz.dtype)
+    homo_xyz = torch.cat([pc.get_xyz, ones], dim=1)
+    view_xyz = torch.matmul(homo_xyz, viewpoint_camera.world_view_transform)
+    x = view_xyz[:, 0]
+    y = view_xyz[:, 1]
+    z = torch.clamp(torch.abs(view_xyz[:, 2]), min=1e-4)
+
+    fx = 0.5 * float(viewpoint_camera.image_width) / tanfovx
+    fy = 0.5 * float(viewpoint_camera.image_height) / tanfovy
+
+    jacobian = torch.zeros((pc.get_xyz.shape[0], 2, 3), device=pc.get_xyz.device, dtype=pc.get_xyz.dtype)
+    jacobian[:, 0, 0] = fx / z
+    jacobian[:, 0, 2] = -fx * x / (z * z)
+    jacobian[:, 1, 1] = fy / z
+    jacobian[:, 1, 2] = -fy * y / (z * z)
+
+    cov_world = pc.get_covariance_matrix(scaling_modifier=scaling_modifier)
+    view_rot = viewpoint_camera.world_view_transform[:3, :3].to(device=pc.get_xyz.device, dtype=pc.get_xyz.dtype)
+    cov_view = torch.matmul(view_rot.t().unsqueeze(0), torch.matmul(cov_world, view_rot.unsqueeze(0)))
+    cov_2d = torch.matmul(jacobian, torch.matmul(cov_view, jacobian.transpose(1, 2)))
+
+    a = cov_2d[:, 0, 0]
+    b = cov_2d[:, 0, 1]
+    c = cov_2d[:, 1, 1]
+    trace_half = 0.5 * (a + c)
+    delta = torch.sqrt(torch.clamp((0.5 * (a - c)) ** 2 + b * b, min=0.0))
+    return torch.sqrt(torch.clamp(trace_half + delta, min=1e-12))
+
+
+def _estimate_adaptive_sh_radius(
+    pc: GaussianModel,
+    viewpoint_camera,
+    tanfovx: float,
+    tanfovy: float,
+    scaling_modifier: float,
+    size_metric: str,
+):
+    if size_metric == "projected_cov":
+        return _estimate_projected_cov_radius(pc, viewpoint_camera, tanfovx, tanfovy, scaling_modifier)
+    return _estimate_projected_radius(pc, viewpoint_camera, tanfovx, tanfovy)
 
 
 def _eval_adaptive_low_sh(
@@ -51,7 +94,9 @@ def _eval_adaptive_low_sh(
     for deg in range(max_degree + 1):
         mask = deg_ids == deg
         if mask.any():
-            low_color[mask] = eval_sh(deg, sh_coeff[mask], viewdirs[mask])
+            # eval_sh returns values in SH coefficient domain. Convert back to RGB domain
+            # so degree-0 evaluation reproduces the learned diffuse color instead of rgb - 0.5.
+            low_color[mask] = SH2RGB(eval_sh(deg, sh_coeff[mask], viewdirs[mask]))
     return low_color
 
 
@@ -65,6 +110,7 @@ def render(
     sg_weight: float = 1.0,
     use_adaptive_low_sh: bool = False,
     adaptive_sh_max_degree: int = 2,
+    adaptive_sh_size_metric: str = "approx",
     sh_small_radius_threshold: float = 1.5,
     sh_medium_radius_threshold: float = 6.0,
 ):
@@ -111,7 +157,14 @@ def render(
     if override_color is None:
         viewdirs = viewpoint_camera.camera_center.unsqueeze(0) - means3D
         if use_adaptive_low_sh:
-            projected_radius = _estimate_projected_radius(pc, viewpoint_camera, tanfovx, tanfovy)
+            projected_radius = _estimate_adaptive_sh_radius(
+                pc,
+                viewpoint_camera,
+                tanfovx,
+                tanfovy,
+                scaling_modifier,
+                adaptive_sh_size_metric,
+            )
             base_color = _eval_adaptive_low_sh(
                 pc=pc,
                 viewdirs=viewdirs,
